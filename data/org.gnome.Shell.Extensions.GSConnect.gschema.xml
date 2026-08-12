@@ -38,6 +38,16 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <key name="discoverable" type="b">
       <default>true</default>
     </key>
+    <key name="lan-enabled" type="b">
+      <!-- Keep the experimental Bluetooth-only install network-safe until the
+           user explicitly opts into normal KDE Connect LAN discovery. -->
+      <default>false</default>
+      <summary>Enable Wi-Fi and LAN transport</summary>
+    </key>
+    <key name="bluetooth-enabled" type="b">
+      <default>true</default>
+      <summary>Enable Bluetooth RFCOMM transport</summary>
+    </key>
     <key name="missing-openssl" type="b">
       <default>false</default>
     </key>
@@ -195,4 +205,3 @@ SPDX-License-Identifier: GPL-2.0-or-later
     </key>
   </schema>
 </schemalist>
-

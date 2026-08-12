@@ -1,24 +1,28 @@
-# Experimental Bluetooth backend
+# Experimental dual-transport backend
 
 This branch adds a GSConnect Bluetooth Classic transport for KDE Connect
 devices. It uses the KDE Connect RFCOMM service UUID and its Bluetooth
-multiplexing protocol. This experimental package loads only the Bluetooth
-backend, so it cannot use LAN discovery, UDP broadcasts, or a phone hotspot
-as a fallback transport.
+multiplexing protocol alongside GSConnect's existing Wi-Fi/LAN backend.
 
-The branch is intentionally not packaged or installed automatically. A BlueZ
-profile owns the KDE Connect Bluetooth UUID, therefore test it only after
-stopping another KDE Connect daemon that is using Bluetooth. Do not run both
-backends at once.
+Preferences exposes independent **Wi-Fi / LAN** and **Bluetooth RFCOMM**
+switches under **Connection Transports**. Bluetooth is enabled by default and
+Wi-Fi/LAN is disabled by default, so a phone hotspot or institute network is
+never used unless the Wi-Fi/LAN switch is explicitly enabled. Switching a
+transport off closes its current channels and stops its discovery service;
+switching it back on does not require re-pairing.
+
+This experimental branch must be built and installed manually. A BlueZ profile
+owns the KDE Connect Bluetooth UUID, therefore stop another KDE Connect desktop
+daemon that is using Bluetooth before enabling this extension. Do not run both
+desktop services at once.
 
 The Bluetooth backend carries both the default packet channel and additional
 UUID multiplex channels used for payloads. It supports KDE Connect control
 packets such as clipboard sync, notifications, ping, media controls and remote
 input, along with share requests, files, notification icons and photos. SFTP
-remains disabled because it starts a separate TCP service, which Bluetooth-only
-transport intentionally does not provide. Payload support is experimental and
-should be tested with the target phone before relying on it for important
-transfers.
+remains unavailable over Bluetooth because it starts a separate TCP service,
+but works when Wi-Fi/LAN is enabled. Payload support is experimental and should
+be tested with the target phone before relying on it for important transfers.
 
 Bluetooth pairing and GSConnect pairing remain separate. BlueZ protects the
 radio link, while the GSConnect identity packet includes the normal device

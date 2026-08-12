@@ -11,6 +11,7 @@ import * as Core from './core.js';
 import * as DBus from './utils/dbus.js';
 import Device from './device.js';
 
+import * as LanBackend from './backends/lan.js';
 import * as BluetoothBackend from './backends/bluetooth.js';
 
 import {MissingOpensslError} from '../utils/exceptions.js';
@@ -21,7 +22,14 @@ const DEVICE_IFACE = Config.DBUS.lookup_interface(DEVICE_NAME);
 
 
 const backends = {
-    bluetooth: BluetoothBackend,
+    lan: {
+        module: LanBackend,
+        setting: 'lan-enabled',
+    },
+    bluetooth: {
+        module: BluetoothBackend,
+        setting: 'bluetooth-enabled',
+    },
 };
 
 
@@ -292,7 +300,7 @@ const Manager = GObject.registerClass({
     _loadBackends() {
         for (const name in backends) {
             try {
-                const module = backends[name];
+                const {module, setting} = backends[name];
 
                 if (module.ChannelService === undefined)
                     continue;
@@ -310,12 +318,44 @@ const Manager = GObject.registerClass({
                     this._onChannel.bind(this)
                 );
 
-                // Now try to start the backend, allowing us to retry if we fail
-                backend.start();
+                // Keep each transport independently controllable. This lets
+                // a device use either normal KDE Connect LAN discovery or
+                // Bluetooth RFCOMM without restarting GSConnect.
+                backend.__enabledId = this.settings.connect(
+                    `changed::${setting}`,
+                    this._setBackendEnabled.bind(this, name)
+                );
+                this._setBackendEnabled(name);
             } catch (e) {
                 if (Gio.Application.get_default())
                     Gio.Application.get_default().notify_error(e);
             }
+        }
+    }
+
+    /**
+     * Start or stop one configured transport according to its GSettings key.
+     *
+     * @param {string} name - Backend name
+     */
+    _setBackendEnabled(name) {
+        const config = backends[name];
+        const backend = this.backends.get(name);
+
+        if (!config || !backend)
+            return;
+
+        try {
+            const result = this.settings.get_boolean(config.setting)
+                ? backend.start()
+                : backend.stop();
+
+            // Bluetooth stops asynchronously, while the LAN backend stops
+            // synchronously. Report either failure without interrupting the
+            // remaining transport.
+            result?.catch(error => debug(error, `${name} backend`));
+        } catch (error) {
+            debug(error, `${name} backend`);
         }
     }
 
@@ -542,7 +582,11 @@ const Manager = GObject.registerClass({
 
         this._unexportDevices();
 
-        this.backends.forEach(backend => backend.destroy());
+        this.backends.forEach(backend => {
+            if (backend.__enabledId)
+                this.settings.disconnect(backend.__enabledId);
+            backend.destroy();
+        });
         this.backends.clear();
 
         this.devices.forEach(device => device.destroy());

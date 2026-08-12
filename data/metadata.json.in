@@ -1,7 +1,7 @@
 {
     "uuid": "gsconnect@andyholmes.github.io",
-    "name": "GSConnect Bluetooth (Experimental)",
-    "description": "Experimental GSConnect build using Bluetooth RFCOMM only. It does not use Wi-Fi or the KDE Connect desktop application.",
+    "name": "GSConnect Dual Transport (Experimental)",
+    "description": "Experimental GSConnect build with independently switchable Wi-Fi/LAN and Bluetooth RFCOMM transports.",
     "version": @PACKAGE_VERSION@,
     "shell-version": [ "46", "47", "48", "49", "50" ],
     "url": "@PACKAGE_URL@/wiki"

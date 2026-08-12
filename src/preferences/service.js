@@ -149,6 +149,7 @@ export const Window = GObject.registerClass({
         'headerbar', 'stack',
         'infobar_discoverable', 'infobar_openssl',
         'service-menu', 'service-edit', 'refresh-button',
+        'lan-enabled', 'bluetooth-enabled',
         'device-menu', 'prev-button',
 
         // Popover
@@ -224,6 +225,10 @@ export const Window = GObject.registerClass({
 
         // Setting: Keep Alive When Locked
         this.add_action(this.settings.create_action('keep-alive-when-locked'));
+
+        // Connection transports
+        this.add_action(this.settings.create_action('lan-enabled'));
+        this.add_action(this.settings.create_action('bluetooth-enabled'));
 
         // Broadcast automatically every 5 seconds if there are no devices yet
         this._refreshSource = GLib.timeout_add_seconds(
