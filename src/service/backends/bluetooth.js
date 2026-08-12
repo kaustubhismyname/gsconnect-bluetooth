@@ -186,6 +186,14 @@ export const ChannelService = GObject.registerClass({
      * @param {string} [address] - A Bluetooth address from bluetooth:// URI
      */
     broadcast(address = null) {
+        // Android KDE Connect discovers paired RFCOMM services and initiates
+        // the first connection itself. Starting an outbound connection at the
+        // same time races its own client socket and makes it discard both as
+        // duplicates. Keep ordinary discovery passive; an explicit
+        // bluetooth:// address can still be used for a directed reconnect.
+        if (address === null)
+            return;
+
         this._refreshDevices().then(() => {
             for (const device of this._devices.values()) {
                 if (address !== null && device.address !== address)
