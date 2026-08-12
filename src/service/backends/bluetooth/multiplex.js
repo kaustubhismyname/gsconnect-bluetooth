@@ -339,8 +339,9 @@ export class Connection {
     }
 
     _checkProtocol(message) {
-        if (message.type !== MessageType.PROTOCOL ||
-            message.uuid !== DEFAULT_CHANNEL_UUID || message.body.length !== 4)
+        // KDE Connect Android sends protocol negotiation frames with an all-
+        // zero UUID, while desktop clients use the default channel UUID.
+        if (message.type !== MessageType.PROTOCOL || message.body.length < 4)
             throw new Error('Expected a Bluetooth multiplex protocol frame');
 
         const view = new DataView(message.body.buffer, message.body.byteOffset,

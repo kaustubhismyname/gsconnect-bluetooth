@@ -38,6 +38,18 @@ describe('Bluetooth multiplex framing', function () {
         expect(Array.from(frame.slice(19))).toEqual(Array.from(body));
     });
 
+    it('accepts Android protocol headers with the zero UUID', function () {
+        const frame = Multiplex.packMessage(Multiplex.MessageType.PROTOCOL,
+            '00000000-0000-0000-0000-000000000000',
+            new Uint8Array([0, 1, 0, 1]));
+
+        expect(Multiplex.unpackHeader(frame.slice(0, 19))).toEqual({
+            type: Multiplex.MessageType.PROTOCOL,
+            size: 4,
+            uuid: '00000000-0000-0000-0000-000000000000',
+        });
+    });
+
     it('rejects malformed UUIDs and oversized frames', function () {
         expect(() => Multiplex.packMessage(Multiplex.MessageType.WRITE,
             'not-a-uuid')).toThrow();

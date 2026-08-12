@@ -300,12 +300,11 @@ export const ChannelService = GObject.registerClass({
             Gio.resources_lookup_data(
                 `${Config.APP_PATH}/${Config.APP_ID}.sdp.xml`,
                 Gio.ResourceLookupFlags.NONE).toArray());
-        const options = new GLib.Variant('a{sv}', {
+        const options = {
             Name: new GLib.Variant('s', 'GSConnect'),
             RequireAuthentication: new GLib.Variant('b', true),
-            Role: new GLib.Variant('s', 'server'),
             ServiceRecord: new GLib.Variant('s', serviceRecord),
-        });
+        };
 
         await this._profileManager.call('RegisterProfile',
             new GLib.Variant('(osa{sv})', [PROFILE_PATH, SERVICE_UUID, options]),
