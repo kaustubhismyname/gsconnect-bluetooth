@@ -2,8 +2,9 @@
 
 This branch adds a GSConnect Bluetooth Classic transport for KDE Connect
 devices. It uses the KDE Connect RFCOMM service UUID and its Bluetooth
-multiplexing protocol, so it does not need LAN discovery, UDP broadcasts, or
-the institute Wi-Fi network.
+multiplexing protocol. This experimental package loads only the Bluetooth
+backend, so it cannot use LAN discovery, UDP broadcasts, or a phone hotspot
+as a fallback transport.
 
 The branch is intentionally not packaged or installed automatically. A BlueZ
 profile owns the KDE Connect Bluetooth UUID, therefore test it only after
