@@ -255,11 +255,16 @@ export class Connection {
     async negotiate(identity) {
         const localIdentity = new TextEncoder().encode(identity);
 
-        await this._send(MessageType.PROTOCOL, DEFAULT_CHANNEL_UUID,
-            new Uint8Array([0, PROTOCOL_VERSION, 0, PROTOCOL_VERSION]));
-
+        // Android sends its protocol frame as soon as its multiplexer is
+        // constructed.  Read that frame before answering: this is also the
+        // ordering used by KDE Connect's original desktop Bluetooth backend.
+        // It avoids two peers simultaneously trying to write their initial
+        // frame on an RFCOMM socket that Android is still bringing up.
         const protocol = await this._readMessage();
         this._checkProtocol(protocol);
+
+        await this._send(MessageType.PROTOCOL, DEFAULT_CHANNEL_UUID,
+            new Uint8Array([0, PROTOCOL_VERSION, 0, PROTOCOL_VERSION]));
 
         await this.requestRead(DEFAULT_CHANNEL_UUID);
         const first = await this._readMessage();
