@@ -377,7 +377,7 @@ export const Window = GObject.registerClass({
                     128,
                     true
                 ),
-                program_name: 'GSConnect',
+                program_name: 'GSConnect Bluetooth (Experimental)',
                 // TRANSLATORS: eg. 'Translator Name <your.email@domain.com>'
                 translator_credits: _('translator-credits'),
                 version: Config.PACKAGE_VERSION.toString(),

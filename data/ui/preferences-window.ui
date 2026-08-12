@@ -265,6 +265,23 @@ SPDX-License-Identifier: GPL-2.0-or-later
                         <property name="margin_bottom">32</property>
                         <property name="orientation">vertical</property>
                         <child>
+                          <object class="GtkLabel" id="experimental-build-label">
+                            <property name="visible">True</property>
+                            <property name="can_focus">False</property>
+                            <property name="halign">start</property>
+                            <property name="margin_bottom">16</property>
+                            <property name="label">GSConnect Bluetooth (Experimental) · Bluetooth RFCOMM only · Wi-Fi disabled</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">True</property>
+                            <property name="position">0</property>
+                          </packing>
+                        </child>
+                        <child>
                           <object class="GtkGrid">
                             <property name="visible">True</property>
                             <property name="can_focus">False</property>
