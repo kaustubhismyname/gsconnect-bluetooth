@@ -60,6 +60,22 @@ function unpackProperties(values) {
 
 
 /**
+ * Allow the RFCOMM data path to settle after BlueZ hands a socket to the
+ * profile. Both KDE Connect's desktop and Android implementations do this.
+ *
+ * @returns {Promise<void>}
+ */
+function waitForRfcomm() {
+    return new Promise(resolve => {
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+            resolve();
+            return GLib.SOURCE_REMOVE;
+        });
+    });
+}
+
+
+/**
  * Make an initialized proxy bound to the service's private system-bus link.
  *
  * @param {Gio.DBusConnection} connection - The system bus connection
@@ -108,6 +124,7 @@ export const ChannelService = GObject.registerClass({
         this._started = false;
         this._registered = false;
         this._connections = new Map();
+        this._negotiating = new Set();
     }
 
     get certificate() {
@@ -183,13 +200,32 @@ export const ChannelService = GObject.registerClass({
         });
     }
 
-    async NewConnection(objectPath, fd) {
+    NewConnection(objectPath, fd) {
+        const socket = Gio.Socket.new_from_fd(fd);
+        const connection = socket.connection_factory_create_connection();
+
+        // Profile1 methods must return as soon as the fd is accepted.
+        // Waiting for the identity packet here holds up BlueZ's RFCOMM
+        // connection completion, leaving Android waiting for the socket.
+        if (this._negotiating.has(objectPath)) {
+            connection.close(null);
+            return;
+        }
+
+        this._negotiating.add(objectPath);
+        this._acceptConnection(objectPath, connection).catch(error => {
+            debug(error, `Bluetooth ${objectPath}`);
+        }).finally(() => {
+            this._negotiating.delete(objectPath);
+        });
+    }
+
+    async _acceptConnection(objectPath, connection) {
         let channel = null;
 
         try {
             const device = await this._getDevice(objectPath);
-            const socket = Gio.Socket.new_from_fd(fd);
-            const connection = socket.connection_factory_create_connection();
+            await waitForRfcomm();
 
             channel = new Channel({
                 backend: this,
@@ -206,6 +242,7 @@ export const ChannelService = GObject.registerClass({
             this.channel(channel);
         } catch (error) {
             channel?.close();
+            connection.close(null);
             throw error;
         }
     }
@@ -249,6 +286,7 @@ export const ChannelService = GObject.registerClass({
 
         this.channels.clear();
         this._connections.clear();
+        this._negotiating.clear();
         this._devices.clear();
 
         try {
@@ -333,7 +371,8 @@ export const ChannelService = GObject.registerClass({
 
     async _connectDevice(device) {
         if (!device.paired || this.channels.has(`bluetooth://${device.address}`) ||
-            this._connections.has(device.path))
+            this._connections.has(device.path) ||
+            this._negotiating.has(device.path))
             return;
 
         if (device.uuids.length && !device.uuids.includes(SERVICE_UUID))
