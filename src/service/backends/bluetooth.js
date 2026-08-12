@@ -335,9 +335,10 @@ export const ChannelService = GObject.registerClass({
             Name: new GLib.Variant('s', 'GSConnect'),
             RequireAuthorization: new GLib.Variant('b', false),
             RequireAuthentication: new GLib.Variant('b', true),
-            // BlueZ binds an RFCOMM listener and completes this KDE Connect
-            // SDP template with that listener's channel. This is the service
-            // registration GSConnect's original Bluetooth backend used.
+            // A custom ServiceRecord is static: BlueZ does not infer an
+            // RFCOMM listener or insert its channel. Keep this value in sync
+            // with the ProtocolDescriptorList in the bundled SDP record.
+            Channel: new GLib.Variant('q', 6),
             ServiceRecord: new GLib.Variant('s', serviceRecord),
         };
 

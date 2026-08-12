@@ -28,7 +28,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
       <!-- RFCOMM -->
       <sequence>
         <uuid value="0x0003" />
-        <!-- <uint8 value="0x06" /> -->
+        <uint8 value="0x06" />
       </sequence>
     </sequence>
   </attribute>
