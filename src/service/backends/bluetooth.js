@@ -192,7 +192,7 @@ export const ChannelService = GObject.registerClass({
     broadcast() {
     }
 
-    async NewConnection(objectPath, fd) {
+    NewConnection(objectPath, fd) {
         const socket = Gio.Socket.new_from_fd(fd);
         const connection = socket.connection_factory_create_connection();
 
@@ -202,15 +202,16 @@ export const ChannelService = GObject.registerClass({
         }
 
         this._negotiating.add(objectPath);
-        try {
-            // BlueZ keeps ownership of the profile handoff until this method
-            // completes. Keep it pending through protocol negotiation: doing
-            // it in the background made Android receive a reset before the
-            // first multiplex frame.
-            await this._acceptConnection(objectPath, connection);
-        } finally {
+        // BlueZ must receive this Profile1 reply before Android's
+        // BluetoothSocket.connect() completes. Android starts its multiplex
+        // protocol only after that call returns, so awaiting the first frame
+        // here deadlocks both endpoints until Android resets the socket.
+        // Keep `connection` alive in the asynchronous negotiation instead.
+        this._acceptConnection(objectPath, connection).catch(error => {
+            debug(error, `Bluetooth ${objectPath}`);
+        }).finally(() => {
             this._negotiating.delete(objectPath);
-        }
+        });
     }
 
     async _acceptConnection(objectPath, connection) {
