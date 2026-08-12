@@ -33,11 +33,19 @@ fi
 
 # COMPRESS
 cd ${ZIP_DIR}
-zip -qr ${ZIP_FILE} .
+if command -v zip > /dev/null; then
+    zip -qr ${ZIP_FILE} .
+elif command -v bsdtar > /dev/null; then
+    bsdtar -a -cf ${ZIP_FILE} .
+elif command -v 7z > /dev/null; then
+    7z a -tzip ${ZIP_FILE} . > /dev/null
+else
+    echo "Unable to create extension archive: install zip, bsdtar or 7z" >&2
+    exit 1
+fi
 echo "Extension saved to ${ZIP_FILE}"
 
 # INSTALL
 if [ "$INSTALL" = true ]; then
     gnome-extensions install --force ${ZIP_FILE}
 fi
-

@@ -56,4 +56,44 @@ describe('Bluetooth multiplex framing', function () {
         expect(() => Multiplex.packMessage(Multiplex.MessageType.WRITE,
             Multiplex.DEFAULT_CHANNEL_UUID, new Uint8Array(0x10000))).toThrow();
     });
+
+    it('opens and closes a payload channel independently', async function () {
+        const frames = [];
+        const output = {
+            write_all_async(frame, _priority, _cancellable, callback) {
+                frames.push(frame);
+                callback(this, frame);
+            },
+            write_all_finish() {
+                return [true, 0];
+            },
+        };
+        const socket = {
+            get_input_stream() {
+                return null;
+            },
+            get_output_stream() {
+                return output;
+            },
+            close() {
+            },
+        };
+        const connection = new Multiplex.Connection(socket);
+        const payload = await connection.openChannel();
+
+        expect(connection.getChannel(payload.uuid)).toBe(payload);
+        expect(Multiplex.unpackHeader(frames[0].slice(0, 19))).toEqual({
+            type: Multiplex.MessageType.OPEN,
+            size: 0,
+            uuid: payload.uuid,
+        });
+
+        await connection.closeChannel(payload.uuid);
+        expect(() => connection.getChannel(payload.uuid)).toThrow();
+        expect(Multiplex.unpackHeader(frames[1].slice(0, 19))).toEqual({
+            type: Multiplex.MessageType.CLOSE,
+            size: 0,
+            uuid: payload.uuid,
+        });
+    });
 });

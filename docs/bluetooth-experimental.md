@@ -11,11 +11,14 @@ profile owns the KDE Connect Bluetooth UUID, therefore test it only after
 stopping another KDE Connect daemon that is using Bluetooth. Do not run both
 backends at once.
 
-The first milestone carries the default packet channel only. It supports
-KDE Connect control packets such as clipboard sync, notifications, ping,
-media controls and remote input. It intentionally does not advertise SFTP,
-share, photo, or other payload-based capabilities until multiplexed file
-transfer support is implemented and tested.
+The Bluetooth backend carries both the default packet channel and additional
+UUID multiplex channels used for payloads. It supports KDE Connect control
+packets such as clipboard sync, notifications, ping, media controls and remote
+input, along with share requests, files, notification icons and photos. SFTP
+remains disabled because it starts a separate TCP service, which Bluetooth-only
+transport intentionally does not provide. Payload support is experimental and
+should be tested with the target phone before relying on it for important
+transfers.
 
 Bluetooth pairing and GSConnect pairing remain separate. BlueZ protects the
 radio link, while the GSConnect identity packet includes the normal device

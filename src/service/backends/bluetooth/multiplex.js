@@ -132,6 +132,35 @@ class ChannelBuffer {
         }
     }
 
+    /**
+     * Read up to the requested number of bytes, waiting until one is available.
+     *
+     * Unlike the packet channel, payload channels have no delimiter. Keeping
+     * this on the bounded buffer preserves the multiplexer's credit-based
+     * flow control for arbitrary binary data.
+     *
+     * @param {number} length - The maximum number of bytes to return
+     * @param {Gio.Cancellable} [cancellable] - A cancellable
+     * @returns {Promise<Uint8Array>} The next available bytes
+     */
+    async read(length, cancellable = null) {
+        if (!Number.isSafeInteger(length) || length < 0)
+            throw new TypeError(`Invalid Bluetooth payload read length: ${length}`);
+
+        if (length === 0)
+            return new Uint8Array();
+
+        while (true) {
+            if (this._bytes.length > 0)
+                return this._take(Math.min(length, this._bytes.length));
+
+            if (this._closed)
+                throw this._closed;
+
+            await this._wait(cancellable);
+        }
+    }
+
     _take(length) {
         const bytes = this._bytes.slice(0, length);
         this._bytes = this._bytes.slice(length);
@@ -144,8 +173,18 @@ class ChannelBuffer {
             const waiter = {resolve, reject, cancellable, id: 0};
 
             if (cancellable) {
+                if (cancellable.is_cancelled()) {
+                    reject(new Gio.IOErrorEnum({
+                        code: Gio.IOErrorEnum.CANCELLED,
+                        message: 'Operation cancelled',
+                    }));
+                    return;
+                }
+
                 waiter.id = cancellable.connect(() => {
-                    this._waiters.splice(this._waiters.indexOf(waiter), 1);
+                    const index = this._waiters.indexOf(waiter);
+                    if (index !== -1)
+                        this._waiters.splice(index, 1);
                     reject(new Gio.IOErrorEnum({
                         code: Gio.IOErrorEnum.CANCELLED,
                         message: 'Operation cancelled',
@@ -179,6 +218,7 @@ export class Channel {
         this.uuid = uuid;
         this.readCredit = 0;
         this.writeCredit = 0;
+        this._closed = false;
         this._writeWaiters = [];
         this.buffer = new ChannelBuffer(() => {
             this.connection.requestRead(this.uuid).catch(this.connection.close.bind(
@@ -187,6 +227,10 @@ export class Channel {
     }
 
     close() {
+        if (this._closed)
+            return;
+
+        this._closed = true;
         this.buffer.close();
 
         for (const waiter of this._writeWaiters.splice(0))
@@ -197,10 +241,30 @@ export class Channel {
         return this.buffer.readLine(cancellable);
     }
 
+    /**
+     * Read binary payload data from this channel.
+     *
+     * A payload channel begins with no read credit. Request the initial window
+     * before waiting, then ChannelBuffer requests each subsequent window as it
+     * is consumed.
+     *
+     * @param {number} length - The maximum number of bytes to read
+     * @param {Gio.Cancellable} [cancellable] - A cancellable
+     * @returns {Promise<Uint8Array>} The next available bytes
+     */
+    read(length, cancellable = null) {
+        this.connection.requestRead(this.uuid).catch(this.connection.close.bind(
+            this.connection));
+        return this.buffer.read(length, cancellable);
+    }
+
     async write(bytes) {
         let offset = 0;
 
         while (offset < bytes.length) {
+            if (this._closed)
+                throw new Error('Multiplex channel closed');
+
             while (this.writeCredit === 0)
                 await this._waitForWriteCredit();
 
@@ -222,6 +286,11 @@ export class Channel {
 
     _waitForWriteCredit() {
         return new Promise((resolve, reject) => {
+            if (this._closed) {
+                reject(new Error('Multiplex channel closed'));
+                return;
+            }
+
             this._writeWaiters.push({resolve, reject});
         });
     }
@@ -316,6 +385,62 @@ export class Connection {
             channel.readCredit -= amount;
             throw e;
         }
+    }
+
+    /**
+     * Create a payload channel and tell the peer about it.
+     *
+     * The channel is registered before its OPEN frame is sent so a prompt READ
+     * response from Android cannot race with local bookkeeping.
+     *
+     * @returns {Promise<Channel>} The opened payload channel
+     */
+    async openChannel() {
+        const uuid = GLib.uuid_string_random();
+        const channel = this._addChannel(uuid);
+
+        try {
+            await this._send(MessageType.OPEN, uuid);
+            return channel;
+        } catch (error) {
+            this.channels.delete(uuid);
+            channel.close();
+            throw error;
+        }
+    }
+
+    /**
+     * Look up a payload channel announced by the peer.
+     *
+     * Multiplex frames are serial, so an OPEN frame is processed before the
+     * packet that references its UUID. A missing channel therefore indicates a
+     * malformed or prematurely closed transfer.
+     *
+     * @param {string} uuid - The payload channel UUID
+     * @returns {Channel} The channel
+     */
+    getChannel(uuid) {
+        const channel = this.channels.get(uuid);
+        if (!channel)
+            throw new Error(`Unknown Bluetooth payload channel ${uuid}`);
+
+        return channel;
+    }
+
+    /**
+     * Close one logical channel without closing the RFCOMM connection.
+     *
+     * @param {string} uuid - The payload channel UUID
+     * @returns {Promise<void>}
+     */
+    async closeChannel(uuid) {
+        const channel = this.channels.get(uuid);
+        if (!channel)
+            return;
+
+        this.channels.delete(uuid);
+        channel.close();
+        await this._send(MessageType.CLOSE, uuid);
     }
 
     close(error = new Error('Multiplex connection closed')) {

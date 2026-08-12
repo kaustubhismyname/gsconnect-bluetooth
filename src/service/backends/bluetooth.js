@@ -33,14 +33,99 @@ const BLUEZ_INFO = Gio.DBusNodeInfo.new_for_xml(`
 
 const PROFILE_INFO = BLUEZ_INFO.lookup_interface('org.bluez.Profile1');
 
-// These packets carry arbitrary payloads. Their Bluetooth multiplex channels
-// are deliberately deferred until file-transfer handling has test coverage.
-const PAYLOAD_CAPABILITIES = new Set([
-    'kdeconnect.photo',
-    'kdeconnect.share.request',
+const PAYLOAD_BUFFER_SIZE = 4096;
+
+// SFTP negotiates a separate TCP server and is therefore fundamentally a LAN
+// feature. File shares, photos and notification icons use regular KDE Connect
+// payload channels and can travel over RFCOMM.
+const UNSUPPORTED_CAPABILITIES = new Set([
     'kdeconnect.sftp',
     'kdeconnect.sftp.request',
 ]);
+
+
+/**
+ * Read binary data from a Gio input stream.
+ *
+ * Gio.InputStream.read_bytes_async() has no promise wrapper in GSConnect's
+ * bootstrap, unlike the higher-level transfer helpers, so keep the callback
+ * boundary contained in the Bluetooth backend.
+ *
+ * @param {Gio.InputStream} stream - The source stream
+ * @param {number} size - Maximum bytes to read
+ * @param {Gio.Cancellable} cancellable - A cancellable
+ * @returns {Promise<Uint8Array>} Bytes read (empty at end of stream)
+ */
+function readBytes(stream, size, cancellable) {
+    return new Promise((resolve, reject) => {
+        stream.read_bytes_async(size, GLib.PRIORITY_DEFAULT, cancellable,
+            (input, result) => {
+                try {
+                    resolve(input.read_bytes_finish(result).toArray());
+                } catch (error) {
+                    reject(error);
+                }
+            });
+    });
+}
+
+
+/**
+ * Write a complete binary block to a Gio output stream.
+ *
+ * @param {Gio.OutputStream} stream - The destination stream
+ * @param {Uint8Array} bytes - Bytes to write
+ * @param {Gio.Cancellable} cancellable - A cancellable
+ * @returns {Promise<void>}
+ */
+function writeAll(stream, bytes, cancellable) {
+    return new Promise((resolve, reject) => {
+        stream.write_all_async(bytes, GLib.PRIORITY_DEFAULT, cancellable,
+            (output, result) => {
+                try {
+                    output.write_all_finish(result);
+                    resolve();
+                } catch (error) {
+                    reject(error);
+                }
+            });
+    });
+}
+
+
+/**
+ * Close a transfer stream, preserving a prior transfer failure.
+ *
+ * @param {Gio.IOStream} stream - The stream to close
+ * @returns {Promise<void>}
+ */
+async function closeStream(stream) {
+    try {
+        await stream.close_async(GLib.PRIORITY_DEFAULT, null);
+    } catch (error) {
+        debug(error, 'Bluetooth payload stream cleanup');
+    }
+}
+
+
+/**
+ * Return the peer-created UUID advertised in a payload packet.
+ *
+ * @param {Core.Packet} packet - A payload packet
+ * @returns {string} A valid multiplex UUID
+ */
+function getPayloadUuid(packet) {
+    const uuid = packet.payloadTransferInfo?.uuid;
+    const hex = typeof uuid === 'string' ? uuid.replaceAll('-', '') : '';
+
+    if (!/^[0-9a-f]{32}$/i.test(hex))
+        throw new Error('Invalid Bluetooth payload channel UUID');
+
+    if (uuid === Multiplex.DEFAULT_CHANNEL_UUID)
+        throw new Error('Bluetooth payload cannot use the default channel');
+
+    return uuid;
+}
 
 
 /**
@@ -171,7 +256,7 @@ export const ChannelService = GObject.registerClass({
 
         for (const direction of ['incomingCapabilities', 'outgoingCapabilities']) {
             this.identity.body[direction] = this.identity.body[direction].filter(
-                type => !PAYLOAD_CAPABILITIES.has(type));
+                type => !UNSUPPORTED_CAPABILITIES.has(type));
         }
     }
 
@@ -550,16 +635,99 @@ export const Channel = GObject.registerClass({
         this._multiplex?.close();
     }
 
-    rejectTransfer() {
-        // Payload plugins are not advertised over Bluetooth yet.
+    async rejectTransfer(packet) {
+        try {
+            if (!packet?.hasPayload())
+                return;
+
+            await this._multiplex.closeChannel(getPayloadUuid(packet));
+        } catch (error) {
+            debug(error, 'Bluetooth payload rejection');
+        }
     }
 
-    download() {
-        throw new Error('Bluetooth payload transfers are not implemented');
+    /**
+     * Receive a Bluetooth payload through the UUID channel identified in the
+     * KDE Connect packet. Android opens that channel before it sends the
+     * packet, then streams data once we grant its read credit.
+     *
+     * @param {Core.Packet} packet - The received payload packet
+     * @param {Gio.OutputStream} target - The destination stream
+     * @param {Gio.Cancellable} [cancellable] - A cancellable
+     */
+    async download(packet, target, cancellable = null) {
+        const uuid = getPayloadUuid(packet);
+        const transfer = this._multiplex.getChannel(uuid);
+        const activeCancellable = cancellable || this.cancellable;
+        const size = Number(packet.payloadSize);
+
+        if (!Number.isSafeInteger(size) || size < 0)
+            throw new Error(`Invalid Bluetooth payload size: ${packet.payloadSize}`);
+
+        let remaining = size;
+
+        try {
+            while (remaining > 0) {
+                const bytes = await transfer.read(
+                    Math.min(remaining, PAYLOAD_BUFFER_SIZE), activeCancellable);
+                if (bytes.length === 0)
+                    throw new Error(`Incomplete Bluetooth payload: ${size - remaining}/${size}`);
+
+                await writeAll(target, bytes, activeCancellable);
+                remaining -= bytes.length;
+            }
+        } finally {
+            await this._multiplex.closeChannel(uuid).catch(error => {
+                debug(error, 'Bluetooth payload channel cleanup');
+            });
+            await closeStream(target);
+        }
     }
 
-    upload() {
-        throw new Error('Bluetooth payload transfers are not implemented');
+    /**
+     * Send a payload through a new Bluetooth multiplex channel. The OPEN
+     * frame must precede the regular KDE Connect packet so Android can obtain
+     * its input stream as soon as it processes that packet.
+     *
+     * @param {Core.Packet} packet - The packet that describes the payload
+     * @param {Gio.InputStream} source - The payload source stream
+     * @param {number} size - The expected payload size
+     * @param {Gio.Cancellable} [cancellable] - A cancellable
+     */
+    async upload(packet, source, size, cancellable = null) {
+        const payloadSize = Number(size);
+        if (!Number.isSafeInteger(payloadSize) || payloadSize < 0)
+            throw new Error(`Invalid Bluetooth payload size: ${size}`);
+
+        const activeCancellable = cancellable || this.cancellable;
+        const transfer = await this._multiplex.openChannel();
+        let remaining = payloadSize;
+
+        try {
+            packet.body.payloadHash = this.checksum;
+            packet.payloadSize = payloadSize;
+            packet.payloadTransferInfo = {uuid: transfer.uuid};
+            await this.sendPacket(new Core.Packet(packet), activeCancellable);
+
+            while (remaining > 0) {
+                const bytes = await readBytes(source,
+                    Math.min(remaining, PAYLOAD_BUFFER_SIZE), activeCancellable);
+                if (bytes.length === 0) {
+                    throw new Gio.IOErrorEnum({
+                        code: Gio.IOErrorEnum.PARTIAL_INPUT,
+                        message: 'Bluetooth payload source ended early',
+                    });
+                }
+
+                await transfer.write(bytes);
+                remaining -= bytes.length;
+            }
+        } finally {
+            await this._multiplex.closeChannel(transfer.uuid).catch(error => {
+                debug(error, 'Bluetooth payload channel cleanup');
+            });
+            await closeStream(source);
+        }
     }
 
     _validateIdentity() {
