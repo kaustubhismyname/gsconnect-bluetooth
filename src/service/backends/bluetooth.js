@@ -175,6 +175,10 @@ export const ChannelService = GObject.registerClass({
         }
     }
 
+    get name() {
+        return super.name;
+    }
+
     set name(name) {
         super.name = name;
         this._identity = undefined;
