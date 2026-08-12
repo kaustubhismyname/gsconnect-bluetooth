@@ -342,14 +342,15 @@ export const ChannelService = GObject.registerClass({
             g_object_path: PROFILE_PATH,
         });
 
-        const serviceRecord = new TextDecoder().decode(
-            Gio.resources_lookup_data(
-                `${Config.APP_PATH}/${Config.APP_ID}.sdp.xml`,
-                Gio.ResourceLookupFlags.NONE).toArray());
         const options = {
             Name: new GLib.Variant('s', 'GSConnect'),
+            // The profile API lets BlueZ generate the SDP record from these
+            // fields. The previous hand-written record omitted the RFCOMM
+            // channel and Android therefore could not discover a usable
+            // service. KDE Connect uses an RFCOMM server for this UUID.
+            Role: new GLib.Variant('s', 'server'),
+            Channel: new GLib.Variant('q', 6),
             RequireAuthentication: new GLib.Variant('b', true),
-            ServiceRecord: new GLib.Variant('s', serviceRecord),
         };
 
         await this._profileManager.call('RegisterProfile',
