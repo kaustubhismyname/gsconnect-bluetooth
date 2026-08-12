@@ -184,19 +184,12 @@ const Device = GObject.registerClass({
         return this._contacts;
     }
 
-    // FIXME: backend should do this stuff
     get encryption_info() {
         if (!this.channel)
             return '';
 
-        // Bluetooth connections have no certificate so we use the host address
-        if (this.connection_type === 'bluetooth') {
-            // TRANSLATORS: Bluetooth address for remote device
-            return _('Bluetooth device at %s').format('???');
-        }
-
-        // FIXME: another ugly reach-around
-        const localCert = this.service.manager.backends.get('lan')?.certificate;
+        const localCert = this.channel.certificate ||
+            this.service.manager.backends.get('lan')?.certificate;
         const remoteCert = this.channel?.peer_certificate;
         if (!localCert || !remoteCert)
             return '';
@@ -912,8 +905,9 @@ const Device = GObject.registerClass({
     _setPaired(paired) {
         this._resetPairRequest();
 
-        // For TCP connections we store or reset the TLS Certificate
-        if (this.connection_type === 'lan') {
+        // LAN and Bluetooth both authenticate the remote device with the same
+        // long-lived certificate. Bluetooth transports it in the identity.
+        if (['lan', 'bluetooth'].includes(this.connection_type)) {
             if (paired) {
                 this.settings.set_string(
                     'certificate-pem',
