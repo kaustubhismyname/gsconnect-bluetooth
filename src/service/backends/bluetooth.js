@@ -181,31 +181,15 @@ export const ChannelService = GObject.registerClass({
     }
 
     /**
-     * Ask BlueZ to connect a paired device, or all known candidate devices.
+     * Advertise the Bluetooth profile for Android KDE Connect discovery.
      *
-     * @param {string} [address] - A Bluetooth address from bluetooth:// URI
+     * Android's server implementation closes a link it accepted as soon as
+     * the identity exchange is complete. Its client implementation retains
+     * the link, so the phone must create the initial RFCOMM connection. The
+     * BlueZ profile registration performed in _start() supplies the SDP
+     * record Android discovers; nothing needs sending here.
      */
-    broadcast(address = null) {
-        // Android KDE Connect discovers paired RFCOMM services and initiates
-        // the first connection itself. Starting an outbound connection at the
-        // same time races its own client socket and makes it discard both as
-        // duplicates. Keep ordinary discovery passive; an explicit
-        // bluetooth:// address can still be used for a directed reconnect.
-        if (address === null)
-            return;
-
-        this._refreshDevices().then(() => {
-            for (const device of this._devices.values()) {
-                if (address !== null && device.address !== address)
-                    continue;
-
-                this._connectDevice(device).catch(error => {
-                    debug(error, `Bluetooth ${device.address}`);
-                });
-            }
-        }).catch(error => {
-            debug(error, 'Bluetooth device discovery');
-        });
+    broadcast() {
     }
 
     async NewConnection(objectPath, fd) {
