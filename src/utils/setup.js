@@ -10,6 +10,16 @@ import Gettext from 'gettext';
 import Config from '../config.js';
 
 
+const KDECONNECT_AUTOSTART_FILE = 'org.kde.kdeconnect.daemon.desktop';
+const KDECONNECT_AUTOSTART_MARKER = 'X-GSConnect-Bluetooth-Transport=true';
+const KDECONNECT_AUTOSTART_CONTENTS = `[Desktop Entry]
+Type=Application
+Name=KDE Connect
+Hidden=true
+${KDECONNECT_AUTOSTART_MARKER}
+`;
+
+
 /**
  * Initialise and setup Gettext.
  */
@@ -131,6 +141,77 @@ export function ensurePermissions() {
         ];
         for (const file of executableFiles)
             _setExecutable(GLib.build_filenamev([Config.PACKAGE_DATADIR, file]));
+    }
+}
+
+/**
+ * Make this Bluetooth-only build the sole owner of KDE Connect's RFCOMM
+ * service UUID. Android KDE Connect discovers that UUID through SDP, so the
+ * stock kdeconnectd daemon and this backend cannot run concurrently.
+ *
+ * The per-user XDG autostart override is created when this extension is
+ * enabled, before the next graphical login. It is removed again when the
+ * extension is disabled, but only if it has our marker.
+ */
+export function enableBluetoothTransport() {
+    const autostartDir = GLib.build_filenamev([
+        GLib.get_user_config_dir(),
+        'autostart',
+    ]);
+    const filename = GLib.build_filenamev([
+        autostartDir,
+        KDECONNECT_AUTOSTART_FILE,
+    ]);
+    const file = Gio.File.new_for_path(filename);
+
+    try {
+        if (file.query_exists(null)) {
+            const [, bytes] = file.load_contents(null);
+            const contents = new TextDecoder().decode(bytes);
+
+            // Do not overwrite a user-managed KDE Connect policy.
+            if (!contents.includes(KDECONNECT_AUTOSTART_MARKER)) {
+                log('GSConnect Bluetooth: keeping existing KDE Connect autostart override');
+                return false;
+            }
+        }
+
+        return _installFile(
+            autostartDir,
+            KDECONNECT_AUTOSTART_FILE,
+            KDECONNECT_AUTOSTART_CONTENTS
+        );
+    } catch (e) {
+        logError(e, 'GSConnect Bluetooth');
+        return false;
+    }
+}
+
+/**
+ * Remove the autostart override installed by enableBluetoothTransport().
+ */
+export function disableBluetoothTransport() {
+    const filename = GLib.build_filenamev([
+        GLib.get_user_config_dir(),
+        'autostart',
+        KDECONNECT_AUTOSTART_FILE,
+    ]);
+    const file = Gio.File.new_for_path(filename);
+
+    try {
+        if (!file.query_exists(null))
+            return true;
+
+        const [, bytes] = file.load_contents(null);
+        const contents = new TextDecoder().decode(bytes);
+
+        if (!contents.includes(KDECONNECT_AUTOSTART_MARKER))
+            return false;
+
+        return file.delete(null);
+    } catch (e) {
+        logError(e, 'GSConnect Bluetooth');
+        return false;
     }
 }
 

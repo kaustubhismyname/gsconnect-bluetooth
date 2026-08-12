@@ -387,6 +387,8 @@ export default class GSConnectExtension extends Extension {
     }
 
     enable() {
+        Setup.enableBluetoothTransport();
+
         serviceIndicator = new ServiceIndicator();
         Notification.patchGtkNotificationSources();
 
@@ -398,6 +400,8 @@ export default class GSConnectExtension extends Extension {
         serviceIndicator.destroy();
         serviceIndicator = null;
         Notification.unpatchGtkNotificationSources();
+
+        Setup.disableBluetoothTransport();
 
         if (this.lockscreenInput) {
             this.lockscreenInput.unpatchInhibitor();

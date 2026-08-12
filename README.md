@@ -30,6 +30,20 @@ With GSConnect you can securely connect to mobile devices and other desktops to:
 Please see the **[Wiki][wiki]** for more information about
 **[Features][features]** and **[Help][help]**.
 
+## Bluetooth transport (experimental fork)
+
+This branch uses Bluetooth RFCOMM only; it does not use Wi-Fi or the local
+network. Android KDE Connect discovers Bluetooth peers through the same SDP
+service UUID used by the stock `kdeconnectd` daemon, so both desktop services
+cannot own it at the same time.
+
+When this extension is enabled, it creates a marked user-level XDG autostart
+override for `kdeconnectd`. That prevents the stock daemon from reclaiming the
+UUID on the next GNOME login, while the enabled GSConnect extension starts its
+own service automatically. Disabling this extension removes only the override
+it created, restoring the stock daemon for the next login. Pair a device once;
+its paired state is then retained across sessions.
+
 ## Project Status
 
 GSConnect is now under the GitHub organisation [GSConnect][gsconnect-org].
