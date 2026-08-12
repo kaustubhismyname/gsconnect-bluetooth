@@ -13,6 +13,7 @@ import GLib from 'gi://GLib';
 export const DEFAULT_CHANNEL_UUID = 'a0d0aaf4-1072-4d81-aa35-902a954b1266';
 
 const BUFFER_SIZE = 4096;
+const MAX_PACKET_SIZE = 1024 * 1024;
 const HEADER_SIZE = 19;
 const PROTOCOL_VERSION = 1;
 
@@ -89,9 +90,10 @@ export function unpackHeader(header) {
  */
 class ChannelBuffer {
 
-    constructor(onConsume) {
+    constructor(onConsume, maxLength = BUFFER_SIZE) {
         this._bytes = new Uint8Array();
         this._onConsume = onConsume;
+        this._maxLength = maxLength;
         this._waiters = [];
         this._closed = null;
     }
@@ -124,6 +126,9 @@ class ChannelBuffer {
             const index = this._bytes.indexOf(0x0a);
             if (index !== -1)
                 return this._take(index + 1);
+
+            if (this._bytes.length >= this._maxLength)
+                throw new Error(`Bluetooth packet exceeds ${this._maxLength} bytes`);
 
             if (this._closed)
                 throw this._closed;
@@ -213,9 +218,10 @@ class ChannelBuffer {
  */
 export class Channel {
 
-    constructor(connection, uuid) {
+    constructor(connection, uuid, maxBufferSize = BUFFER_SIZE) {
         this.connection = connection;
         this.uuid = uuid;
+        this.maxBufferSize = maxBufferSize;
         this.readCredit = 0;
         this.writeCredit = 0;
         this._closed = false;
@@ -223,7 +229,7 @@ export class Channel {
         this.buffer = new ChannelBuffer(() => {
             this.connection.requestRead(this.uuid).catch(this.connection.close.bind(
                 this.connection));
-        });
+        }, maxBufferSize);
     }
 
     close() {
@@ -312,7 +318,8 @@ export class Connection {
         this._output = connection.get_output_stream();
         this.cancellable = cancellable;
         this.channels = new Map();
-        this.defaultChannel = this._addChannel(DEFAULT_CHANNEL_UUID);
+        this.defaultChannel = this._addChannel(DEFAULT_CHANNEL_UUID,
+            MAX_PACKET_SIZE);
         this._writeChain = Promise.resolve();
         this._closed = false;
     }
@@ -371,7 +378,9 @@ export class Connection {
         if (!channel || this.closed)
             return;
 
-        const amount = BUFFER_SIZE - channel.readCredit - channel.buffer.length;
+        const available = channel.maxBufferSize - channel.readCredit -
+            channel.buffer.length;
+        const amount = Math.min(BUFFER_SIZE, available);
         if (amount <= 0)
             return;
 
@@ -462,8 +471,8 @@ export class Connection {
         this.error = error;
     }
 
-    _addChannel(uuid) {
-        const channel = new Channel(this, uuid);
+    _addChannel(uuid, maxBufferSize = BUFFER_SIZE) {
+        const channel = new Channel(this, uuid, maxBufferSize);
         this.channels.set(uuid, channel);
         return channel;
     }
@@ -518,7 +527,14 @@ export class Connection {
                 this._input.read_bytes_async(remaining, GLib.PRIORITY_DEFAULT,
                     this.cancellable, (stream, result) => {
                         try {
-                            resolve(stream.read_bytes_finish(result).toArray());
+                            // GLib.Bytes.toArray() can expose a view backed by
+                            // the temporary GLib.Bytes result. Copy it before
+                            // that result is finalized between async reads.
+                            const resultBytes = stream.read_bytes_finish(result);
+                            const source = resultBytes.toArray();
+                            const copy = new Uint8Array(source.length);
+                            copy.set(source);
+                            resolve(copy);
                         } catch (e) {
                             reject(e);
                         }
@@ -577,8 +593,16 @@ export class Connection {
         if (message.body.length !== 0)
             throw new Error('Bluetooth multiplex open frame has a body');
 
-        if (!this.channels.has(message.uuid))
+        if (!this.channels.has(message.uuid)) {
             this._addChannel(message.uuid);
+
+            // Android begins its payload writer directly after the ordinary
+            // packet that references this UUID. Grant the initial window as
+            // soon as the channel is opened, matching KDE Connect's desktop
+            // backend, instead of making its sending thread wait for a
+            // plugin to construct a destination stream.
+            this.requestRead(message.uuid).catch(this.close.bind(this));
+        }
     }
 
     _receiveClose(message) {
@@ -602,6 +626,12 @@ export class Connection {
 
         channel.readCredit -= message.body.length;
         channel.buffer.append(message.body);
+
+        // A packet channel is newline-delimited, so a valid control packet
+        // can be larger than the 4 KiB multiplex frame window. Keep issuing
+        // bounded windows until its line is complete; otherwise Android's
+        // serial send queue stalls behind the first large packet.
+        this.requestRead(message.uuid).catch(this.close.bind(this));
     }
 
     _send(type, uuid, body = new Uint8Array()) {

@@ -61,7 +61,13 @@ function readBytes(stream, size, cancellable) {
         stream.read_bytes_async(size, GLib.PRIORITY_DEFAULT, cancellable,
             (input, result) => {
                 try {
-                    resolve(input.read_bytes_finish(result).toArray());
+                    // Keep an owned copy: the GLib.Bytes result can be
+                    // finalized as soon as this callback returns.
+                    const resultBytes = input.read_bytes_finish(result);
+                    const source = resultBytes.toArray();
+                    const copy = new Uint8Array(source.length);
+                    copy.set(source);
+                    resolve(copy);
                 } catch (error) {
                     reject(error);
                 }
@@ -80,10 +86,15 @@ function readBytes(stream, size, cancellable) {
  */
 function writeAll(stream, bytes, cancellable) {
     return new Promise((resolve, reject) => {
-        stream.write_all_async(bytes, GLib.PRIORITY_DEFAULT, cancellable,
+        // write_all_async() receives a borrowed JavaScript buffer. The async
+        // GObject invocation may outlive that foreign buffer, corrupting the
+        // first bytes of Android's 1 KiB payload frames. GLib.Bytes gives GIO
+        // an owned, ref-counted buffer for the full write instead.
+        const data = GLib.Bytes.new(bytes);
+        stream.write_bytes_async(data, GLib.PRIORITY_DEFAULT, cancellable,
             (output, result) => {
                 try {
-                    output.write_all_finish(result);
+                    output.write_bytes_finish(result);
                     resolve();
                 } catch (error) {
                     reject(error);
