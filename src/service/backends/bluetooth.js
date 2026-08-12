@@ -208,24 +208,25 @@ export const ChannelService = GObject.registerClass({
         });
     }
 
-    NewConnection(objectPath, fd) {
+    async NewConnection(objectPath, fd) {
         const socket = Gio.Socket.new_from_fd(fd);
         const connection = socket.connection_factory_create_connection();
 
-        // Profile1 methods must return as soon as the fd is accepted.
-        // Waiting for the identity packet here holds up BlueZ's RFCOMM
-        // connection completion, leaving Android waiting for the socket.
         if (this._negotiating.has(objectPath)) {
             connection.close(null);
             return;
         }
 
         this._negotiating.add(objectPath);
-        this._acceptConnection(objectPath, connection).catch(error => {
-            debug(error, `Bluetooth ${objectPath}`);
-        }).finally(() => {
+        try {
+            // BlueZ keeps ownership of the profile handoff until this method
+            // completes. Keep it pending through protocol negotiation: doing
+            // it in the background made Android receive a reset before the
+            // first multiplex frame.
+            await this._acceptConnection(objectPath, connection);
+        } finally {
             this._negotiating.delete(objectPath);
-        });
+        }
     }
 
     async _acceptConnection(objectPath, connection) {
@@ -342,15 +343,18 @@ export const ChannelService = GObject.registerClass({
             g_object_path: PROFILE_PATH,
         });
 
+        const serviceRecord = new TextDecoder().decode(
+            Gio.resources_lookup_data(
+                `${Config.APP_PATH}/${Config.APP_ID}.sdp.xml`,
+                Gio.ResourceLookupFlags.NONE).toArray());
         const options = {
             Name: new GLib.Variant('s', 'GSConnect'),
-            // The profile API lets BlueZ generate the SDP record from these
-            // fields. The previous hand-written record omitted the RFCOMM
-            // channel and Android therefore could not discover a usable
-            // service. KDE Connect uses an RFCOMM server for this UUID.
-            Role: new GLib.Variant('s', 'server'),
-            Channel: new GLib.Variant('q', 6),
+            RequireAuthorization: new GLib.Variant('b', false),
             RequireAuthentication: new GLib.Variant('b', true),
+            // BlueZ binds an RFCOMM listener and completes this KDE Connect
+            // SDP template with that listener's channel. This is the service
+            // registration GSConnect's original Bluetooth backend used.
+            ServiceRecord: new GLib.Variant('s', serviceRecord),
         };
 
         await this._profileManager.call('RegisterProfile',
